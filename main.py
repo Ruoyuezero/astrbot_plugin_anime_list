@@ -246,9 +246,11 @@ class AnimeListPlugin(Star):
             m = re.match(r"^(.*?)(\d+)$", keyword)
             base_kw = m.group(1).strip() if m else ""
             num = int(m.group(2)) if m else 0
-            if base_kw and 1 <= num <= 9 and yuc.search(pool, base_kw):
-                keyword, want_season = base_kw, num
-                found = yuc.search(pool, keyword)
+            if base_kw and 1 <= num <= 9:
+                in_yuc = bool(yuc.search(pool, base_kw))
+                if in_yuc or _alias_of(base_kw):
+                    keyword, want_season = base_kw, num
+                    found = yuc.search(pool, keyword) if in_yuc else []
         hit = found[0] if found else None
         hit_season = anilist.title_season((hit["jp"] or hit["cn"])) if hit else 0
 
@@ -261,7 +263,10 @@ class AnimeListPlugin(Star):
         media = None
         # 明确指定第几季时，先用基础名去跨季检索
         if want_season:
-            base = anilist.base_title(hit["jp"]) if hit and hit["jp"] else keyword
+            if hit and hit.get("jp"):
+                base = anilist.base_title(hit["jp"])
+            else:
+                base = _alias_of(keyword) or keyword   # 往年番走别名表
             media = await anilist.find_season(await self._sess(), base, want_season)
         elif hit and hit_season > 1:
             # 没写季数时默认回到第一季

@@ -155,7 +155,9 @@ async def find_season(session: aiohttp.ClientSession, base: str, season_no: int)
 
     matches = [c for c in cands if title_season((c.get("title") or {}).get("native") or "") == season_no
                or title_season((c.get("title") or {}).get("romaji") or "") == season_no]
-    pool = matches or cands
+    # 同季常常还挂着特别篇/OVA，优先正片 TV，避免只拿到 1 集的衍生
+    tv_only = [c for c in matches if (c.get("format") or "").upper() == "TV"]
+    pool = tv_only or matches or cands
     pool.sort(key=year_of)
     pick = pool[0] if season_no == 1 else pool[-1]
     try:
