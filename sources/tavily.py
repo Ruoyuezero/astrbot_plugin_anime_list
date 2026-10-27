@@ -50,7 +50,7 @@ def _pick_jp(text: str, allow_kana_only: bool = False) -> str:
 
 def _relevant(item: dict, keyword: str) -> bool:
     """只认标题里真的出现用户输入名字的结果，正文太长不足为凭。"""
-    probe = re.sub(r"[^\u4e00-\u9fff]", "", keyword or "")[:8]
+    probe = re.sub(r"[^\u4e00-\u9fff0-9]", "", keyword or "")[:6]   # 保留数字，「打了300年」才认得出
     if not probe:
         return False
     return probe in (item.get("title") or "")
@@ -118,3 +118,57 @@ async def search_anime_name(
         if names:
             return names
     return []
+
+
+_CN_PATTERNS = [
+    re.compile(r"\|\s*译名\s*\|\s*([^\s|，,。；;！!？?]+)"),
+    re.compile(r"(?:译名|中文名)\s*[：:]\s*([^\s，,。；;！!？?]+)"),
+]
+
+
+def _pick_cn(text: str, keyword: str = "") -> str:
+    """从页面里取官方 / 常用中文译名。"""
+    for pat in _CN_PATTERNS:
+        for m in pat.finditer(text):
+            cand = m.group(1).strip(" 「」『』《》，,。")
+            if not cand or not re.search(r"[\u4e00-\u9fff]", cand):
+                continue
+            if keyword and keyword[:3] not in cand and cand[:3] not in keyword:
+                continue
+            return cand
+    return ""
+
+
+async def search_cn_name(
+    session: aiohttp.ClientSession,
+    api_key: str,
+    keyword: str,
+    max_results: int = 5,
+) -> str:
+    """查常用中文译名，优先萌娘百科。"""
+    if not api_key or not keyword:
+        return ""
+    headers = {"Content-Type": "application/json", "Authorization": f"Bearer {api_key}"}
+    for domains in (["zh.moegirl.org.cn"], SITES):
+        payload = {"query": f"{keyword} 动画", "max_results": max_results,
+                   "search_depth": "basic", "include_domains": domains}
+        try:
+            async with session.post(ENDPOINT, json=payload, headers=headers, timeout=25) as resp:
+                if resp.status != 200:
+                    continue
+                data = await resp.json()
+        except Exception:
+            continue
+        for item in (data.get("results") or []):
+            if not _relevant(item, keyword):
+                continue
+            # 站点条目的标题通常就是常用译名，去掉「- 萌娘百科」这类后缀
+            raw_title = item.get("title") or ""
+            title = re.split(r"\s*[-—–]\s*(?:维基百科|萌娘百科|Bangumi|百度百科|Moegirl).*$", raw_title)[0].strip()
+            title = title.split(" - ")[0].strip()
+            if title and re.search(r"[\u4e00-\u9fff]", title):
+                return title
+            name = _pick_cn(item.get("content") or "", keyword)
+            if name:
+                return name
+    return ""

@@ -77,11 +77,34 @@ async def fetch_season(season: str, session: aiohttp.ClientSession) -> list[dict
             title_td = tbl.select_one("td.date_title_")
             if title_td is not None:
                 cn_title = title_td.get_text("", strip=True)
-        # 旧版结构没有那两个 class，从表格文本里取：含假名或拉丁字母的才算日文名
-        if not jp_title and len(lines) > 1:
-            cand = lines[1]
-            if _KANA_RE.search(cand) or re.search(r"[A-Za-z]", cand):
-                jp_title = cand
+        # 旧版结构没有那两个 class：前几行按字符特征分组，含假名/字母的归日文，其余归中文
+        def _is_jp(x: str) -> bool:
+            return bool(_KANA_RE.search(x) or re.search(r"[A-Za-z]", x))
+
+        if not jp_title:
+            # 优先取含假名的真日文名，其次才是含字母的（避免「第4期 Part.1」这种抢先）
+            pick = next(((i, x) for i, x in enumerate(lines[1:5], start=1) if _KANA_RE.search(x)), None)
+            if pick is None:
+                pick = next(((i, x) for i, x in enumerate(lines[1:5], start=1)
+                             if re.search(r"[A-Za-z]", x)), None)
+            for i, cand in ([pick] if pick else []):
+                if True:
+                    jp_title = cand
+                    # 日文名也可能折行，把紧随其后的日文行并回来
+                    for nxt in lines[i + 1:i + 3]:
+                        if _is_jp(nxt) and "改编" not in nxt and "原创" not in nxt:
+                            jp_title += " " + nxt
+                        else:
+                            break
+                    break
+        if not cn_title:
+            cn_title = lines[0]
+        # 中文名可能折成多行，把紧随其后的非日文行并回来
+        for cand in lines[1:5]:
+            if _is_jp(cand) or "改编" in cand or "原创" in cand:
+                break
+            if cand != cn_title:
+                cn_title += cand
         img = tbl.find("img")
         if img is None and tbl.parent is not None:
             # 封面图常挂在外层 div 的姊妹 table 里
@@ -94,7 +117,7 @@ async def fetch_season(season: str, session: aiohttp.ClientSession) -> list[dict
         items.append({
             "cn": cn_title or lines[0],
             "jp": jp_title,
-            "type": lines[2] if len(lines) > 2 else "",
+            "type": next((x for x in lines if "改编" in x or "原创" in x), ""),
             "tags": lines[3] if len(lines) > 3 else "",
             "month": int(m.group(1)),
             "day": int(m.group(2)),

@@ -93,42 +93,99 @@ def _load_index() -> dict[str, str]:
     return _index_cache
 
 
+def _canonical_cn(jp: str) -> str:
+    """由日文名反查索引里的规范中文全名，取最短的一条。"""
+    if not jp:
+        return ""
+    key = jp.replace(" ", "").replace("　", "")
+    hits = [(len(cn), cn) for cn, v in _load_index().items()
+            if v.replace(" ", "").replace("　", "") == key]
+    return min(hits)[1] if hits else ""
+
+
 def _index_lookup(keyword: str) -> str:
-    """在 2019-2026 全量索引里找日文名：先精确，再相似度。"""
+    """兼容旧调用：只取日文名。"""
+    return _index_hit(keyword)[1]
+
+
+def _index_hit(keyword: str) -> tuple[str, str]:
+    """在 2019-2026 全量索引里查找，返回 (中文名, 日文名)。"""
     idx = _load_index()
     if not idx:
-        return ""
-    key = keyword.strip()
+        return "", ""
+    key = (keyword or "").strip()
     if key in idx:
-        return idx[key]
+        return key, idx[key]
+
+    def _match(kw: str, strip_particles: bool = False) -> tuple[str, str]:
+        if not kw:
+            return "", ""
+        starts, contains = [], []
+        for cn, jp in idx.items():
+            n = yuc._norm(cn)
+            if strip_particles:
+                n = re.sub(r"[的之]", "", n)
+            if n.startswith(kw):
+                starts.append((len(n), cn, jp))
+            elif kw in n:
+                contains.append((len(n), cn, jp))
+        if starts:
+            best = min(starts)
+            return best[1], best[2]
+        if contains:
+            best = min(contains)
+            return best[1], best[2]
+        import difflib
+        best, best_cn, best_score = "", "", 0.0
+        for cn, jp in idx.items():
+            score = difflib.SequenceMatcher(None, kw, yuc._norm(cn)).ratio()
+            if score > best_score:
+                best, best_cn, best_score = jp, cn, score
+        return (best_cn, best) if best_score >= 0.85 else ("", "")
+
     kw = yuc._norm(key)
-    if not kw:
-        return ""
+    hit = _match(kw)
+    if hit[1]:          # 元组恒为真，必须看是否有日文名
+        return hit
+    # 简称常省掉「的」「之」这类虚词，去掉再试一次
+    kw2 = re.sub(r"[的之]", "", kw)
+    if kw2 and kw2 != kw:
+        return _match(kw2, strip_particles=True)
+    return _match(kw, strip_particles=True)
+    return ""
 
-    # 分层匹配：完全相等 → 以关键词开头（取最短）→ 包含关键词（取最短）→ 相似度兜底
-    starts, contains = [], []
-    for cn, jp in idx.items():
-        n = yuc._norm(cn)
-        if n.startswith(kw):
-            starts.append((len(n), jp))
-        elif kw in n:
-            contains.append((len(n), jp))
-    if starts:
-        return min(starts)[1]
-    if contains:
-        return min(contains)[1]
 
+def _title_distance(a: str, b: str) -> float:
     import difflib
-    best, best_score = "", 0.0
-    for cn, jp in idx.items():
-        score = difflib.SequenceMatcher(None, kw, yuc._norm(cn)).ratio()
-        if score > best_score:
-            best, best_score = jp, score
-    return best if best_score >= 0.85 else ""
+    return difflib.SequenceMatcher(None, yuc._norm(a), yuc._norm(b)).ratio()
 
 
 _ALIAS_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "cn_alias.json")
 _alias_cache: dict[str, str] | None = None
+
+
+_CN_TITLE_CACHE = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
+    "plugin_data", "astrbot_plugin_anime_list", "cn_title_cache.json")
+
+
+def _save_cn_title(jp: str, cn: str) -> None:
+    """记录日文名对应的常用译名，供下次直接用。"""
+    if not jp or not cn:
+        return
+    try:
+        data = {}
+        if os.path.exists(_CN_TITLE_CACHE):
+            with open(_CN_TITLE_CACHE, encoding="utf-8") as f:
+                data = json.load(f)
+        if data.get(jp) == cn:
+            return
+        data[jp] = cn
+        os.makedirs(os.path.dirname(_CN_TITLE_CACHE), exist_ok=True)
+        with open(_CN_TITLE_CACHE, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=1)
+    except Exception:
+        pass
 
 
 def _save_alias(name: str, jp: str) -> None:
@@ -318,23 +375,37 @@ class AnimeListPlugin(Star):
             m = re.match(r"^(.*?)(\d+)$", keyword)
             base_kw = m.group(1).strip() if m else ""
             num = int(m.group(2)) if m else 0
-            if base_kw and 1 <= num <= 9 and (_index_lookup(base_kw) or _alias_of(base_kw)):
+            if base_kw and 1 <= num <= 9 and (_index_hit(base_kw)[1] or _alias_of(base_kw)):
                 keyword, want_season = base_kw, num
+                map_cn, jp = _index_hit(base_kw)
 
         sess = await self._sess()
-        jp = _index_lookup(keyword) or _alias_of(keyword)
+        map_cn, jp = _index_hit(keyword)
+        if not jp:
+            jp = _alias_of(keyword)
         media = None
+        cn_title = ""
 
         # ① 映射表
+        hit_cn = map_cn      # 映射表里的中文名，直接拿来当标题
         if jp:
             base_jp = anilist.base_title(jp)
+            if not hit_cn:
+                hit_cn = keyword
+            # 季数优先看中文名（「第2期」这类标记最可靠），日文名只作补充
+            hit_season = anilist.title_season(hit_cn) or anilist.title_season(jp)
             if want_season:
                 media = await anilist.find_season(sess, base_jp, want_season)
-            if not media and not want_season and anilist.title_season(jp) > 1:
-                # 命中续作（如「夏目友人帳 漆」）而用户没写季数，回到第一季
+                if not media:
+                    logger.info(f"[AnimeList] {keyword} 第{want_season}季不存在，不出图")
+                    return None
+            elif hit_season > 1:
+                # 没写季数却命中了续作：按约定回到第一季，标题也去掉季数标记
                 media = await anilist.find_season(sess, base_jp, 1)
                 if media:
-                    logger.info(f"[AnimeList] {keyword} 命中续作 {jp}，回退第一季")
+                    logger.info(f"[AnimeList] {keyword} 命中续作 {hit_cn}，回退第一季")
+                    hit_cn = anilist.base_title(hit_cn) if hit_cn else hit_cn
+                    map_cn = hit_cn
             if not media:
                 media = await anilist.find_detail(sess, jp=jp, cn=keyword)
 
@@ -342,12 +413,16 @@ class AnimeListPlugin(Star):
         if not media:
             if want_season:
                 media = await anilist.find_season(sess, keyword, want_season)
-            if not media:
+                if not media:
+                    return None       # 指定了这一期但查不到，绝不退回别的季
+            else:
                 media = await anilist.find_detail(sess, jp=keyword, cn=keyword)
 
-        # ③ Tavily 搜萌娘百科
+        # ③ Tavily 搜萌娘百科（顺手带回常用译名）
         if not media:
-            media = await self._search_fallback(keyword)
+            media, fallback_cn = await self._search_fallback(keyword)
+            if fallback_cn:
+                cn_title = fallback_cn
 
         if not media:
             return None
@@ -375,8 +450,15 @@ class AnimeListPlugin(Star):
             progress += f"（下一集 {nxt_day.month}/{nxt_day.day}）"
 
         studios = [n["name"] for n in ((media.get("studios") or {}).get("nodes") or [])]
+        # 标题：映射表里的中文名优先，其次兜底时记下的常用译名，最后才用用户输入
+        if not cn_title:
+            cn_title = hit_cn or keyword
+        # 标题末尾补上期数：以最终查到的这部为准，用户没写也能对
+        media_season = anilist.title_season((media.get("title") or {}).get("native") or "") or want_season or 1
+        if media_season > 1 and anilist.title_season(cn_title) <= 1:
+            cn_title = f"{cn_title} 第{media_season}期"
         data = {
-            "cn": keyword,
+            "cn": cn_title,
             "jp": (media.get("title") or {}).get("native") or "",
             "genre": " · ".join((media.get("genres") or [])[:3]),
             "status_text": status_text,
@@ -398,29 +480,69 @@ class AnimeListPlugin(Star):
         await asyncio.to_thread(render_card, data, cover, out)
         return out
 
-    async def _search_fallback(self, keyword: str):
-        """索引、别名、直搜都失败时，用搜索服务找日文名再查 AniList。"""
-        # 只读插件自己的配置，与 AstrBot 全局搜索配置完全分开
+    async def _common_cn(self, native_jp: str, keyword: str) -> str:
+        """用萌娘百科查常用中文译名，结果落盘缓存，避免反复搜索。"""
+        cache_path = os.path.join(DATA_DIR, "cn_title_cache.json")
+        try:
+            with open(cache_path, encoding="utf-8") as f:
+                cache = json.load(f)
+        except Exception:
+            cache = {}
+        if native_jp in cache:
+            return cache[native_jp]
+
         api_key = str(self.config.get("tavily_api_key") or "").strip()
         if not api_key:
-            return None
+            return ""
+        try:
+            name = await tavily.search_cn_name(await self._sess(), api_key, keyword)
+        except Exception:
+            return ""
+        if name:
+            cache[native_jp] = name
+            try:
+                os.makedirs(DATA_DIR, exist_ok=True)
+                with open(cache_path, "w", encoding="utf-8") as f:
+                    json.dump(cache, f, ensure_ascii=False, indent=1)
+            except Exception:
+                pass
+        return name
+
+    async def _search_fallback(self, keyword: str) -> tuple:
+        """索引、别名、直搜都失败时，用搜索服务找日文名，顺手记下常用译名。"""
+        api_key = str(self.config.get("tavily_api_key") or "").strip()
+        if not api_key:
+            return None, ""
         try:
             limit = int(self.config.get("tavily_max_results") or 5)
         except Exception:
             limit = 5
+
+        sess = await self._sess()
+        cn_name = ""
         try:
-            candidates = await tavily.search_anime_name(await self._sess(), api_key, keyword, limit)
+            candidates = await tavily.search_anime_name(sess, api_key, keyword, limit)
         except Exception as exc:
             logger.warning(f"[AnimeList] 搜索兜底失败：{exc}")
-            return None
+            return None, ""
+        if not candidates:
+            return None, ""
+
+        # 顺手取一次常用译名，供卡片标题使用
+        try:
+            cn_name = await tavily.search_cn_name(sess, api_key, keyword)
+        except Exception:
+            cn_name = ""
 
         for jp in candidates:
-            media = await anilist.find_detail(await self._sess(), jp=jp, cn=keyword)
+            media = await anilist.find_detail(sess, jp=jp, cn=keyword)
             if media:
-                logger.info(f"[AnimeList] 搜索兜底命中：{keyword} -> {jp}")
+                logger.info(f"[AnimeList] 搜索兜底命中：{keyword} -> {jp}（译名：{cn_name or '无'}）")
                 _save_alias(keyword, jp)
-                return media
-        return None
+                if cn_name:
+                    _save_cn_title(jp, cn_name)
+                return media, cn_name
+        return None, ""
 
     @filter.command("listpic")
     async def anime_list_pic(self, event: AstrMessageEvent):

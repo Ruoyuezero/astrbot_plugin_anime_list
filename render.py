@@ -9,7 +9,7 @@ import re
 from PIL import Image, ImageDraw, ImageFilter, ImageFont
 
 W, H = 820, 1300
-RENDER_VERSION = 7  # 改动渲染样式时把这里 +1，旧图自动失效
+RENDER_VERSION = 9  # 改动渲染样式时把这里 +1，旧图自动失效
 M = 60
 BLUR_PCT = 0  # 高斯模糊强度（%），0 表示封面原样
 
@@ -132,10 +132,10 @@ def layout(draw, data, color, status_fill=None, draw_status=True, stroke=None):
             draw.text((bx + w / 2, by + h / 2 + 1), st, font=f_small, fill=color, anchor="mm")
 
     # 标题：先缩字号，缩到最小仍放不下就折成两行
-    max_w = W - 2 * M
+    max_w = W - 2 * M - 30   # 两侧多留一点安全边距，避免长标题被客户端裁边
     title_size = 70
     f_title = font(title_size)
-    while draw.textlength(data["cn"], font=f_title) > max_w and title_size > 38:
+    while draw.textlength(data["cn"], font=f_title) > max_w and title_size > 26:
         title_size -= 2
         f_title = font(title_size)
     if draw.textlength(data["cn"], font=f_title) <= max_w:

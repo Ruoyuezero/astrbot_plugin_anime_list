@@ -128,6 +128,14 @@ def title_season(title: str) -> int:
     """从标题里读第几季，读不到就算第 1 季。"""
     if not title:
         return 1
+    # 日文续作常用写法：～そのに～（第二部）、Ⅱ / Ⅲ 这类罗马数字
+    if re.search(r"そのに|その弐", title):
+        return 2
+    if re.search(r"Ⅱ", title):
+        return 2
+    if re.search(r"Ⅲ", title):
+        return 3
+
     m = _SEASON_RE.search(title)
     if not m:
         return 1
@@ -142,7 +150,9 @@ def base_title(title: str) -> str:
     if not title:
         return ""
     cleaned = _SEASON_RE.sub(" ", title)
-    return re.sub(r"\s+", " ", cleaned).strip(" -·・")
+    cleaned = re.sub(r"[〜～][^〜～]{0,20}[〜～]\s*$", " ", cleaned)   # 「〜そのに(2)〜」这类副标题后缀
+    cleaned = re.sub(r"\(\s*\d+\s*\)", " ", cleaned)              # 残留的 (2)
+    return re.sub(r"\s+", " ", cleaned).strip(" -·・〜～")
 
 
 async def find_season(session: aiohttp.ClientSession, base: str, season_no: int) -> dict | None:
@@ -161,9 +171,11 @@ async def find_season(session: aiohttp.ClientSession, base: str, season_no: int)
 
     matches = [c for c in cands if title_season((c.get("title") or {}).get("native") or "") == season_no
                or title_season((c.get("title") or {}).get("romaji") or "") == season_no]
+    if not matches:
+        return None      # 指定了这一季却没有对应条目，绝不拿别的季凑数
     # 同季常常还挂着特别篇/OVA，优先正片 TV，避免只拿到 1 集的衍生
     tv_only = [c for c in matches if (c.get("format") or "").upper() == "TV"]
-    pool = tv_only or matches or cands
+    pool = tv_only or matches
     pool.sort(key=year_of)
     pick = pool[0] if season_no == 1 else pool[-1]
     try:
