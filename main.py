@@ -131,6 +131,25 @@ _ALIAS_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "cn_alias
 _alias_cache: dict[str, str] | None = None
 
 
+_ASTRBOT_CONFIG = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "cmd_config.json")
+
+
+def _global_tavily_key() -> str:
+    """插件没配 key 时，复用 AstrBot 全局的 Tavily 搜索配置。"""
+    try:
+        with open(_ASTRBOT_CONFIG, encoding="utf-8-sig") as f:
+            cfg = json.load(f)
+    except Exception:
+        return ""
+    ps = cfg.get("provider_settings") or {}
+    if not ps.get("web_search"):
+        return ""
+    if str(ps.get("websearch_provider") or "").lower() != "tavily":
+        return ""
+    return str(ps.get("websearch_tavily_key") or "").strip()
+
+
 def _save_alias(name: str, jp: str) -> None:
     """搜索兜底成功后，把新映射写回 cn_alias.json 并刷新缓存。"""
     global _alias_cache
@@ -437,6 +456,8 @@ class AnimeListPlugin(Star):
     async def _search_fallback(self, keyword: str):
         """索引、别名、直搜都失败时，用搜索服务找日文名再查 AniList。"""
         api_key = str(self.config.get("tavily_api_key") or "").strip()
+        if not api_key:
+            api_key = _global_tavily_key()   # 回落用 AstrBot 全局的 Tavily 配置
         if not api_key:
             return None
         try:
