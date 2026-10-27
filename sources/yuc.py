@@ -13,6 +13,7 @@ from bs4 import BeautifulSoup
 BASE = "https://yuc.wiki/{season}/"
 UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120 Safari/537.36"
 
+_KANA_RE = re.compile(r"[\u3040-\u30ff]")
 TIME_RE = re.compile(r"(\d{1,2})/(\d{1,2})\s*周([一二三四五六日])\s*(早间|上午|下午|晚间|深夜|凌晨)?")
 WEEK_ORDER = ["一", "二", "三", "四", "五", "六", "日"]
 
@@ -63,6 +64,19 @@ async def fetch_season(season: str, session: aiohttp.ClientSession) -> list[dict
         lines = [x.strip() for x in tbl.get_text("|", strip=True).split("|") if x.strip()]
         if not lines:
             continue
+
+        # 标题格可能用 <br> 折成多行：含假名的算日文名，其余算中文名的续行
+        cn_title, jp_title = "", ""
+        title_td = tbl.select_one("td.date_title_")
+        if title_td is not None:
+            parts = [x.strip() for x in title_td.get_text("\n", strip=True).split("\n") if x.strip()]
+            if parts:
+                cn_title = parts[0]
+                for extra in parts[1:]:
+                    if _KANA_RE.search(extra):
+                        jp_title = jp_title or extra
+                    else:
+                        cn_title += extra
         img = tbl.find("img")
         if img is None and tbl.parent is not None:
             # 封面图常挂在外层 div 的姊妹 table 里
@@ -73,8 +87,8 @@ async def fetch_season(season: str, session: aiohttp.ClientSession) -> list[dict
             if "d06ad4b201012067db7d59c9dedfadeb6da75cf3" in src:
                 src = ""  # 站点占位图
         items.append({
-            "cn": lines[0],
-            "jp": lines[1] if len(lines) > 1 else "",
+            "cn": cn_title or lines[0],
+            "jp": jp_title or (lines[1] if len(lines) > 1 and _KANA_RE.search(lines[1]) else ""),
             "type": lines[2] if len(lines) > 2 else "",
             "tags": lines[3] if len(lines) > 3 else "",
             "month": int(m.group(1)),
