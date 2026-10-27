@@ -163,13 +163,33 @@ class AnimeListPlugin(Star):
         last_month = 12 if today.month == 1 else today.month - 1
         months = {today.month, last_month}
         merged = yuc.this_week([cur, prev])
-        return [it for it in merged if it["month"] in months], season
+        # 长篇/年番没有月份（month=0），无条件保留
+        kept = [it for it in merged if it["month"] in months or it.get("week") == "*"]
+        return await self._drop_finished(kept), season
+
+    async def _drop_finished(self, items: list[dict]) -> list[dict]:
+        """踢掉已完结的番：只核实上个月开播的，本月刚开播的必然还在连载。"""
+        this_month = date.today().month
+        risky = [it for it in items if it["month"] != this_month and it.get("jp")]
+        if not risky:
+            return items
+        done: set[str] = set()
+        for it in risky:
+            try:
+                media = await anilist.find_detail(await self._sess(), jp=it["jp"], cn=it["cn"])
+            except Exception:
+                continue
+            if media and (media.get("status") or "").upper() == "FINISHED":
+                done.add(it["jp"] or it["cn"])
+        if done:
+            logger.info(f"[AnimeList] 剔除已完结 {len(done)} 部：{sorted(done)}")
+        return [it for it in items if (it["jp"] or it["cn"]) not in done]
 
     # ------------------------------------------------------------ 文本
     def _week_text(self, items: list[dict], season: str) -> list[str]:
         start, end = yuc.week_range()
         long_cnt = sum(1 for it in items if it.get("week") == "*")
-        head = (f"本周番剧（{start.month}/{start.day} - {end.month}/{end.day}）\n"
+        head = (f"本周连载（{start.month}/{start.day} - {end.month}/{end.day}）\n"
                 f"共 {len(items)} 部在播" + (f"，其中长篇 {long_cnt} 部" if long_cnt else ""))
         chunks: list[str] = []
         buf: list[str] = [head]
@@ -331,7 +351,7 @@ class AnimeListPlugin(Star):
                 yield event.plain_result("这周没抓到番剧数据，可能是 yuc.wiki 暂时不可用 (｡>﹏<｡)")
                 return
             start, end = yuc.week_range()
-            out = await self._grid(items, "近期连载",
+            out = await self._grid(items, "本周连载",
                                    f"{start:%m/%d} - {end:%m/%d}　共 {len(items)} 部在播", "week")
             yield event.chain_result([Image.fromFileSystem(out)])
             return
@@ -388,7 +408,7 @@ class AnimeListPlugin(Star):
             subtitle_txt = f"{start:%m/%d} - {end:%m/%d}　共 {len(items)} 部在播"
             out = os.path.join(CARD_DIR, f"week_{_sig([it['cn'] for it in items], subtitle_txt)}.jpg")
             if not (os.path.exists(out) and os.path.getsize(out) > 1024):
-                await asyncio.to_thread(render_schedule, items, "本周番剧", subtitle_txt, out)
+                await asyncio.to_thread(render_schedule, items, "本周连载", subtitle_txt, out)
             yield event.chain_result([Image.fromFileSystem(out)])
             return
 
