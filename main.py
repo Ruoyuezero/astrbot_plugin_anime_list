@@ -379,6 +379,12 @@ class AnimeListPlugin(Star):
             return out
 
         sess = await self._sess()
+        # 长篇/年番没有日文名，先用中文别名表补上，否则批量取封面会整批跳过
+        for it in items:
+            if not it.get("jp"):
+                alias = _alias_of(it["cn"])
+                if alias:
+                    it["jp"] = alias
         mapping = await batch_covers(sess, [it["jp"] for it in items if it["jp"]])
         sem = asyncio.Semaphore(8)
 
