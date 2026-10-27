@@ -65,18 +65,23 @@ async def fetch_season(season: str, session: aiohttp.ClientSession) -> list[dict
         if not lines:
             continue
 
-        # 标题格可能用 <br> 折成多行：含假名的算日文名，其余算中文名的续行
+        # yuc 用专门的 class 区分中文名与日文名，直接读，不靠猜
         cn_title, jp_title = "", ""
-        title_td = tbl.select_one("td.date_title_")
-        if title_td is not None:
-            parts = [x.strip() for x in title_td.get_text("\n", strip=True).split("\n") if x.strip()]
-            if parts:
-                cn_title = parts[0]
-                for extra in parts[1:]:
-                    if _KANA_RE.search(extra):
-                        jp_title = jp_title or extra
-                    else:
-                        cn_title += extra
+        p_cn = tbl.select_one("p.title_cn_r")
+        p_jp = tbl.select_one("p.title_jp_r")
+        if p_cn is not None:
+            cn_title = p_cn.get_text("", strip=True)
+        if p_jp is not None:
+            jp_title = p_jp.get_text("", strip=True)
+        if not cn_title:
+            title_td = tbl.select_one("td.date_title_")
+            if title_td is not None:
+                cn_title = title_td.get_text("", strip=True)
+        # 旧版结构没有那两个 class，从表格文本里取：含假名或拉丁字母的才算日文名
+        if not jp_title and len(lines) > 1:
+            cand = lines[1]
+            if _KANA_RE.search(cand) or re.search(r"[A-Za-z]", cand):
+                jp_title = cand
         img = tbl.find("img")
         if img is None and tbl.parent is not None:
             # 封面图常挂在外层 div 的姊妹 table 里
@@ -88,7 +93,7 @@ async def fetch_season(season: str, session: aiohttp.ClientSession) -> list[dict
                 src = ""  # 站点占位图
         items.append({
             "cn": cn_title or lines[0],
-            "jp": jp_title or (lines[1] if len(lines) > 1 and _KANA_RE.search(lines[1]) else ""),
+            "jp": jp_title,
             "type": lines[2] if len(lines) > 2 else "",
             "tags": lines[3] if len(lines) > 3 else "",
             "month": int(m.group(1)),
