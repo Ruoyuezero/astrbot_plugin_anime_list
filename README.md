@@ -1,6 +1,4 @@
-<p align="center">
-  <img src="logo.png" width="180" alt="astrbot_plugin_anime_list logo">
-</p>
+<img src="logo.png" width="120" align="right" alt="astrbot_plugin_anime_list logo">
 
 # astrbot_plugin_anime_list
 
