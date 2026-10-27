@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="logo.png" width="180" alt="astrbot_plugin_anime_list logo">
+</p>
+
 # astrbot_plugin_anime_list
 
 新番列表插件：查本周番剧、季度新番表，番剧详情直接渲染成一张带封面的信息卡。
