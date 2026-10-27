@@ -7,4 +7,4 @@ help: |
   /list 番剧名 —— 番剧信息卡片
 version: 1.2.0
 author: Seira
-repo: ""
+repo: "https://github.com/Ruoyuezero/astrbot_plugin_anime_list"
