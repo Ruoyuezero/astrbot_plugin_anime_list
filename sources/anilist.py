@@ -113,9 +113,15 @@ async def find_detail(
     return None
 
 
-_CN_NUM = {"一": 1, "二": 2, "三": 3, "四": 4, "五": 5,
-           "六": 6, "七": 7, "八": 8, "九": 9, "十": 10}
-_SEASON_RE = re.compile(r"season\s*(\d+)|第\s*([0-9]+|[一二三四五六七八九十])\s*[期季]|(\d+)(?:st|nd|rd|th)\s*season", re.I)
+_CN_NUM = {"一": 1, "二": 2, "三": 3, "四": 4, "五": 5, "六": 6, "七": 7, "八": 8, "九": 9, "十": 10,
+           # 日文番名常用旧字形表示季数
+           "弐": 2, "参": 3, "肆": 4, "伍": 5, "陸": 6, "漆": 7, "捌": 8, "玖": 9}
+_SEASON_RE = re.compile(
+    r"season\s*(\d+)"
+    r"|第\s*([0-9]+|[一二三四五六七八九十弐参肆伍陸漆捌玖])\s*[期季]"
+    r"|(\d+)(?:st|nd|rd|th)\s*season"
+    r"|\s([弐参肆伍陸漆捌玖])\s*$",   # 「夏目友人帳 漆」这种旧字形季数
+    re.I)
 
 
 def title_season(title: str) -> int:
@@ -125,7 +131,7 @@ def title_season(title: str) -> int:
     m = _SEASON_RE.search(title)
     if not m:
         return 1
-    raw = m.group(1) or m.group(2) or m.group(3) or "1"
+    raw = m.group(1) or m.group(2) or m.group(3) or m.group(4) or "1"
     if raw.isdigit():
         return int(raw)
     return _CN_NUM.get(raw, 1)

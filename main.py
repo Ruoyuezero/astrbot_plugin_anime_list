@@ -327,12 +327,16 @@ class AnimeListPlugin(Star):
 
         # ① 映射表
         if jp:
+            base_jp = anilist.base_title(jp)
             if want_season:
-                media = await anilist.find_season(sess, anilist.base_title(jp), want_season)
+                media = await anilist.find_season(sess, base_jp, want_season)
+            if not media and not want_season and anilist.title_season(jp) > 1:
+                # 命中续作（如「夏目友人帳 漆」）而用户没写季数，回到第一季
+                media = await anilist.find_season(sess, base_jp, 1)
+                if media:
+                    logger.info(f"[AnimeList] {keyword} 命中续作 {jp}，回退第一季")
             if not media:
                 media = await anilist.find_detail(sess, jp=jp, cn=keyword)
-            if not media and not want_season:
-                media = await anilist.find_season(sess, anilist.base_title(jp), 1)
 
         # ② AniList 直接搜
         if not media:
