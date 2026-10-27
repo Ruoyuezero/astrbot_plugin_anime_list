@@ -39,8 +39,19 @@ def _pick_jp(text: str) -> str:
     return ""
 
 
-def _candidates(results: list[dict]) -> list[str]:
+def _relevant(item: dict, keyword: str) -> bool:
+    """搜索结果必须真的提到用户输入的名字，否则一律不认。"""
+    probe = re.sub(r"[^\u4e00-\u9fff]", "", keyword or "")[:4]
+    if not probe:
+        return True
+    text = (item.get("title") or "") + (item.get("content") or "")
+    return probe in text
+
+
+def _candidates(results: list[dict], keyword: str = "") -> list[str]:
     """从搜索结果里挑出可能的日文原名，按可信度排序。"""
+    if keyword:
+        results = [r for r in results if _relevant(r, keyword)]
     out: list[str] = []
 
     def add(name: str) -> None:
@@ -79,8 +90,8 @@ async def search_anime_name(
     }
     query = f"{keyword} 动画 日文原名"
 
-    # 先限定在动漫站点，命中率最高；结果为空再不限域名找一次
-    for domains in (SITES, None):
+    # 先只搜萌娘百科，再放宽到其它动漫站，最后不限域名
+    for domains in (["zh.moegirl.org.cn"], SITES, None):
         payload = {"query": query, "max_results": max_results, "search_depth": "basic"}
         if domains:
             payload["include_domains"] = domains
@@ -91,7 +102,7 @@ async def search_anime_name(
                 data = await resp.json()
         except Exception:
             continue
-        names = _candidates(data.get("results") or [])
+        names = _candidates(data.get("results") or [], keyword)
         if names:
             return names
     return []

@@ -310,62 +310,41 @@ class AnimeListPlugin(Star):
 
     # ------------------------------------------------------------ 卡片
     async def _build_card(self, keyword: str) -> str | None:
-        season = yuc.season_of()
+        """三步走：映射表 → AniList 直接搜 → Tavily 搜萌娘百科。"""
         keyword, want_season = _parse_season_arg(keyword)
-        # 先查 2019-2026 全量索引：命中就省掉抓网页这一步
-        idx_jp = "" if want_season else _index_lookup(keyword)
-        if idx_jp:
-            hit = {"cn": keyword, "jp": idx_jp, "week": "", "slot": "",
-                   "type": "", "month": 0, "day": 0}
-            found = [hit]
-            pool = []
-        else:
-            pool = (await self._season_items(season)) + (await self._season_items(yuc.prev_season(season)))
-            found = yuc.search(pool, keyword)
-        # 「侦探已死2」这种名字后面直接跟数字的写法，按季数处理
+
+        # 「…2」这种末尾数字当季数，前提是基础名在映射表里
         if not want_season and keyword and keyword[-1].isdigit():
             m = re.match(r"^(.*?)(\d+)$", keyword)
             base_kw = m.group(1).strip() if m else ""
             num = int(m.group(2)) if m else 0
-            if base_kw and 1 <= num <= 9:
-                in_yuc = bool(yuc.search(pool, base_kw))
-                if in_yuc or _alias_of(base_kw):
-                    keyword, want_season = base_kw, num
-                    found = yuc.search(pool, keyword) if in_yuc else []
-        hit = found[0] if found else None
-        hit_season = anilist.title_season((hit["jp"] or hit["cn"])) if hit else 0
+            if base_kw and 1 <= num <= 9 and (_index_lookup(base_kw) or _alias_of(base_kw)):
+                keyword, want_season = base_kw, num
 
-        # 长篇/年番在 yuc 没有日文名，先查中文别名表
-        if hit is not None and not hit.get("jp"):
-            hit["jp"] = _alias_of(hit["cn"])
-        if not hit and not want_season:
-            alias_jp = _alias_of(keyword)
-
+        sess = await self._sess()
+        jp = _index_lookup(keyword) or _alias_of(keyword)
         media = None
-        # 明确指定第几季时，先用基础名去跨季检索
-        if want_season:
-            if hit and hit.get("jp"):
-                base = anilist.base_title(hit["jp"])
-            else:
-                base = _alias_of(keyword) or keyword   # 往年番走别名表
-            media = await anilist.find_season(await self._sess(), base, want_season)
-        elif hit and hit_season > 1:
-            # 没写季数时默认回到第一季
-            base = anilist.base_title(hit["jp"] or "")
-            if base:
-                media = await anilist.find_season(await self._sess(), base, 1)
-        if not media and hit:
-            media = await anilist.find_detail(await self._sess(), jp=hit["jp"], cn=hit["cn"],
-                                              year_hint=int(season[:4]))
+
+        # ① 映射表
+        if jp:
+            if want_season:
+                media = await anilist.find_season(sess, anilist.base_title(jp), want_season)
+            if not media:
+                media = await anilist.find_detail(sess, jp=jp, cn=keyword)
+            if not media and not want_season:
+                media = await anilist.find_season(sess, anilist.base_title(jp), 1)
+
+        # ② AniList 直接搜
         if not media:
-            alias_jp = _alias_of(keyword)
-            if alias_jp:
-                media = await anilist.find_detail(await self._sess(), jp=alias_jp, cn=keyword)
+            if want_season:
+                media = await anilist.find_season(sess, keyword, want_season)
+            if not media:
+                media = await anilist.find_detail(sess, jp=keyword, cn=keyword)
+
+        # ③ Tavily 搜萌娘百科
         if not media:
-            media = await anilist.find_detail(await self._sess(), jp=keyword, cn=keyword)
-        if not media:
-            # 最后一道兜底：配置了 Tavily 就搜官方日文名（主要服务 2019 秋之前的老番）
             media = await self._search_fallback(keyword)
+
         if not media:
             return None
 
@@ -383,25 +362,7 @@ class AnimeListPlugin(Star):
         else:
             current = 0
 
-        # 媒体季数与当季条目不一致时，不能沿用当季的中文名和档期
-        media_season = anilist.title_season((media.get("title") or {}).get("native") or "")
-        mismatch = bool(hit and hit_season != media_season)
-        if mismatch:
-            cn_name = anilist.base_title(hit["cn"]) or hit["cn"]
-            week = slot = ""
-        else:
-            cn_name = hit["cn"] if hit else ((media.get("title") or {}).get("native") or keyword)
-            week = f"周{hit['week']}" if hit else ""
-            slot = f" {hit['slot']}" if hit and hit["slot"] else ""
-
-        start = media.get("startDate") or {}
-        prefix = f"{week}{slot}".strip()
-        if prefix and episodes:
-            update = f"{prefix} · 共 {episodes} 集"
-        elif episodes:
-            update = f"共 {episodes} 集"
-        else:
-            update = prefix or "档期未定"
+        update = f"共 {episodes} 集" if episodes else "档期未定"
         progress = f"已更新 {current} / {episodes} 集" if episodes else f"已更新 {current} 集"
         if finished:
             progress = f"已完结 {episodes or '?'} 集"
@@ -411,12 +372,12 @@ class AnimeListPlugin(Star):
 
         studios = [n["name"] for n in ((media.get("studios") or {}).get("nodes") or [])]
         data = {
-            "cn": cn_name,
+            "cn": keyword,
             "jp": (media.get("title") or {}).get("native") or "",
-            "genre": " · ".join((media.get("genres") or [])[:3]) or (hit["type"] if hit else ""),
+            "genre": " · ".join((media.get("genres") or [])[:3]),
             "status_text": status_text,
             "finished": finished,
-            "start": _fmt_date(start),
+            "start": _fmt_date(media.get("startDate")),
             "update": update,
             "progress": progress,
             "studio": studios[0] if studios else "-",
@@ -424,7 +385,6 @@ class AnimeListPlugin(Star):
         }
         os.makedirs(CARD_DIR, exist_ok=True)
         out = os.path.join(CARD_DIR, f"card_{media.get('id')}_{_sig(data, cover_url)}.jpg")
-        # 已完结的番数据不会再变，命中就直接复用；连载中的每次重渲染，保证时效
         done = (media.get("status") or "").upper() == "FINISHED"
         if done and os.path.exists(out) and os.path.getsize(out) > 1024:
             return out
