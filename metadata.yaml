@@ -1,10 +1,12 @@
 name: astrbot_plugin_anime_list
-display_name: 新番列表 AnimeList
+display_name: 你的 AstrBot 追番小助手
 desc: 查询本周番剧、季度新番表，番剧详情会渲染成一张带封面的信息卡
 help: |
-  /list —— 本周番剧更新（本月与上月开播的番）
+  /list —— 本周节目单（本月与上月开播的番）
   /list 2026秋 —— 该季度新番表（也可写 202610）
-  /list 番剧名 —— 番剧信息卡片
-version: 1.2.0
+  /listpic —— 本周缩略图网格
+  /listpic 2026秋 —— 该季度缩略图网格
+  /listpic 番剧名 —— 番剧信息卡片
+version: 1.3.0
 author: Seira
 repo: "https://github.com/Ruoyuezero/astrbot_plugin_anime_list"
