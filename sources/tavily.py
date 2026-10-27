@@ -29,23 +29,31 @@ _PATTERNS = [
 _KANA = re.compile(r"[\u3040-\u30ff]")
 
 
-def _pick_jp(text: str) -> str:
-    for pat in _PATTERNS:
+# 「| 原名 | xxx |」「原名：xxx」这类明确标注，纯汉字也信任（如 夏目友人帳、鬼滅の刃）
+_EXPLICIT = [
+    re.compile(r"\|\s*(?:原名|日文名)\s*\|\s*([^\s|，,。；;]+)"),
+    re.compile(r"(?:日语|日文名|日文原名|原名)\s*[：:]\s*([^\s，,。；;）)】\]|]+)"),
+]
+
+
+def _pick_jp(text: str, allow_kana_only: bool = False) -> str:
+    """allow_kana_only=True 时只接受含假名的候选（用于标题、摘要这类不可靠来源）。"""
+    for pat in _EXPLICIT + _PATTERNS[1:]:
         m = pat.search(text)
         if m:
             cand = m.group(1).strip()
-            if _KANA.search(cand):
-                return cand
+            if allow_kana_only and not _KANA.search(cand):
+                continue
+            return cand
     return ""
 
 
 def _relevant(item: dict, keyword: str) -> bool:
-    """搜索结果必须真的提到用户输入的名字，否则一律不认。"""
-    probe = re.sub(r"[^\u4e00-\u9fff]", "", keyword or "")[:4]
+    """只认标题里真的出现用户输入名字的结果，正文太长不足为凭。"""
+    probe = re.sub(r"[^\u4e00-\u9fff]", "", keyword or "")[:8]
     if not probe:
-        return True
-    text = (item.get("title") or "") + (item.get("content") or "")
-    return probe in text
+        return False
+    return probe in (item.get("title") or "")
 
 
 def _candidates(results: list[dict], keyword: str = "") -> list[str]:
@@ -54,10 +62,13 @@ def _candidates(results: list[dict], keyword: str = "") -> list[str]:
         results = [r for r in results if _relevant(r, keyword)]
     out: list[str] = []
 
-    def add(name: str) -> None:
+    def add(name: str, require_kana: bool = True) -> None:
         name = (name or "").strip(" 「」『』《》，,。")
-        if name and _KANA.search(name) and name not in out and len(name) <= 80:
-            out.append(name)
+        if not name or name in out or len(name) > 80:
+            return
+        if require_kana and not _KANA.search(name):
+            return
+        out.append(name)
 
     def order_key(item: dict) -> int:
         url = (item.get("url") or "").lower()
@@ -70,7 +81,8 @@ def _candidates(results: list[dict], keyword: str = "") -> list[str]:
             add(title.split(" - ")[0])
         add(_pick_jp(title))
         add(_pick_jp(item.get("snippet") or ""))
-        add(_pick_jp(item.get("content") or ""))
+        # 正文里的「原名」字段最可靠，允许纯汉字
+        add(_pick_jp(item.get("content") or ""), require_kana=False)
     return out
 
 
