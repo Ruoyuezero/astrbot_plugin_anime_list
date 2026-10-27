@@ -331,7 +331,7 @@ class AnimeListPlugin(Star):
                 yield event.plain_result("这周没抓到番剧数据，可能是 yuc.wiki 暂时不可用 (｡>﹏<｡)")
                 return
             start, end = yuc.week_range()
-            out = await self._grid(items, "本周番剧",
+            out = await self._grid(items, "近期连载",
                                    f"{start:%m/%d} - {end:%m/%d}　共 {len(items)} 部在播", "week")
             yield event.chain_result([Image.fromFileSystem(out)])
             return
