@@ -78,6 +78,55 @@ def _parse_season_arg(arg: str) -> tuple[str, int]:
 _SEASON_NAMES = {"冬": 1, "春": 4, "夏": 7, "秋": 10}
 
 
+_INDEX_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "yuc_index.json")
+_index_cache: dict[str, str] | None = None
+
+
+def _load_index() -> dict[str, str]:
+    global _index_cache
+    if _index_cache is None:
+        try:
+            with open(_INDEX_PATH, encoding="utf-8") as f:
+                _index_cache = json.load(f)
+        except Exception:
+            _index_cache = {}
+    return _index_cache
+
+
+def _index_lookup(keyword: str) -> str:
+    """在 2019-2026 全量索引里找日文名：先精确，再相似度。"""
+    idx = _load_index()
+    if not idx:
+        return ""
+    key = keyword.strip()
+    if key in idx:
+        return idx[key]
+    kw = yuc._norm(key)
+    if not kw:
+        return ""
+
+    # 分层匹配：完全相等 → 以关键词开头（取最短）→ 包含关键词（取最短）→ 相似度兜底
+    starts, contains = [], []
+    for cn, jp in idx.items():
+        n = yuc._norm(cn)
+        if n.startswith(kw):
+            starts.append((len(n), jp))
+        elif kw in n:
+            contains.append((len(n), jp))
+    if starts:
+        return min(starts)[1]
+    if contains:
+        return min(contains)[1]
+
+    import difflib
+    best, best_score = "", 0.0
+    for cn, jp in idx.items():
+        score = difflib.SequenceMatcher(None, kw, yuc._norm(cn)).ratio()
+        if score > best_score:
+            best, best_score = jp, score
+    return best if best_score >= 0.85 else ""
+
+
 _ALIAS_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "cn_alias.json")
 _alias_cache: dict[str, str] | None = None
 
@@ -238,9 +287,16 @@ class AnimeListPlugin(Star):
     async def _build_card(self, keyword: str) -> str | None:
         season = yuc.season_of()
         keyword, want_season = _parse_season_arg(keyword)
-        # 两季合并后统一打分，取相似度最高的一条
-        pool = (await self._season_items(season)) + (await self._season_items(yuc.prev_season(season)))
-        found = yuc.search(pool, keyword)
+        # 先查 2019-2026 全量索引：命中就省掉抓网页这一步
+        idx_jp = "" if want_season else _index_lookup(keyword)
+        if idx_jp:
+            hit = {"cn": keyword, "jp": idx_jp, "week": "", "slot": "",
+                   "type": "", "month": 0, "day": 0}
+            found = [hit]
+            pool = []
+        else:
+            pool = (await self._season_items(season)) + (await self._season_items(yuc.prev_season(season)))
+            found = yuc.search(pool, keyword)
         # 「侦探已死2」这种名字后面直接跟数字的写法，按季数处理
         if not want_season and keyword and keyword[-1].isdigit():
             m = re.match(r"^(.*?)(\d+)$", keyword)
@@ -311,9 +367,13 @@ class AnimeListPlugin(Star):
             slot = f" {hit['slot']}" if hit and hit["slot"] else ""
 
         start = media.get("startDate") or {}
-        update = f"{week}{slot} · 共 {episodes} 集" if episodes else (f"{week}{slot}".strip() or "档期未定")
-        if mismatch:
-            update = f"共 {episodes} 集" if episodes else "档期未定"
+        prefix = f"{week}{slot}".strip()
+        if prefix and episodes:
+            update = f"{prefix} · 共 {episodes} 集"
+        elif episodes:
+            update = f"共 {episodes} 集"
+        else:
+            update = prefix or "档期未定"
         progress = f"已更新 {current} / {episodes} 集" if episodes else f"已更新 {current} 集"
         if finished:
             progress = f"已完结 {episodes or '?'} 集"
