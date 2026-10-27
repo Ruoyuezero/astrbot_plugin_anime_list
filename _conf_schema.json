@@ -1,0 +1,14 @@
+{
+  "tavily_api_key": {
+    "description": "Tavily API Key",
+    "type": "string",
+    "hint": "留空则关闭搜索兜底。填写后，索引与别名表都查不到的番（主要是 2019 秋之前的老番）会自动调用 Tavily 搜索官方日文名，再拿去 AniList 查详情，查到后自动补进 cn_alias.json",
+    "default": ""
+  },
+  "tavily_max_results": {
+    "description": "搜索返回条数",
+    "type": "int",
+    "hint": "每次搜索取几条结果来提取日文名，默认 5",
+    "default": 5
+  }
+}

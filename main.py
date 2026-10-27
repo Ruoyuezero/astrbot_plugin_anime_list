@@ -19,7 +19,7 @@ from . import sources
 from .render import RENDER_VERSION, render_card
 from .render_grid import render_grid
 from .render_list import render_schedule
-from .sources import anilist, yuc
+from .sources import anilist, tavily, yuc
 from .sources.covers import batch_covers
 from .sources.image_cache import fetch_image
 
@@ -129,6 +129,31 @@ def _index_lookup(keyword: str) -> str:
 
 _ALIAS_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "cn_alias.json")
 _alias_cache: dict[str, str] | None = None
+
+
+def _save_alias(name: str, jp: str) -> None:
+    """搜索兜底成功后，把新映射写回 cn_alias.json 并刷新缓存。"""
+    global _alias_cache
+    name, jp = name.strip(), jp.strip()
+    if not name or not jp:
+        return
+    data = {}
+    try:
+        with open(_ALIAS_PATH, encoding="utf-8") as f:
+            data = json.load(f)
+    except Exception:
+        data = {}
+    if data.get(name) == jp:
+        return
+    data[name] = jp
+    try:
+        with open(_ALIAS_PATH, "w", encoding="utf-8") as f:
+            json.dump(dict(sorted(data.items(), key=lambda kv: kv[0])), f,
+                      ensure_ascii=False, indent=1)
+        _alias_cache = data
+        logger.info(f"[AnimeList] 别名表新增：{name} -> {jp}")
+    except Exception as exc:
+        logger.warning(f"[AnimeList] 别名表写入失败：{exc}")
 
 
 def _alias_of(name: str) -> str:
@@ -339,6 +364,9 @@ class AnimeListPlugin(Star):
         if not media:
             media = await anilist.find_detail(await self._sess(), jp=keyword, cn=keyword)
         if not media:
+            # 最后一道兜底：配置了 Tavily 就搜官方日文名（主要服务 2019 秋之前的老番）
+            media = await self._search_fallback(keyword)
+        if not media:
             return None
 
         cover_url = (media.get("coverImage") or {}).get("extraLarge")
@@ -405,6 +433,29 @@ class AnimeListPlugin(Star):
             return None
         await asyncio.to_thread(render_card, data, cover, out)
         return out
+
+    async def _search_fallback(self, keyword: str):
+        """索引、别名、直搜都失败时，用搜索服务找日文名再查 AniList。"""
+        api_key = str(self.config.get("tavily_api_key") or "").strip()
+        if not api_key:
+            return None
+        try:
+            limit = int(self.config.get("tavily_max_results") or 5)
+        except Exception:
+            limit = 5
+        try:
+            candidates = await tavily.search_anime_name(await self._sess(), api_key, keyword, limit)
+        except Exception as exc:
+            logger.warning(f"[AnimeList] 搜索兜底失败：{exc}")
+            return None
+
+        for jp in candidates:
+            media = await anilist.find_detail(await self._sess(), jp=jp, cn=keyword)
+            if media:
+                logger.info(f"[AnimeList] 搜索兜底命中：{keyword} -> {jp}")
+                _save_alias(keyword, jp)
+                return media
+        return None
 
     @filter.command("listpic")
     async def anime_list_pic(self, event: AstrMessageEvent):
