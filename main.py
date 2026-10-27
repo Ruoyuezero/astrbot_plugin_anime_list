@@ -336,8 +336,10 @@ class AnimeListPlugin(Star):
         }
         os.makedirs(CARD_DIR, exist_ok=True)
         out = os.path.join(CARD_DIR, f"card_{media.get('id')}_{_sig(data, cover_url)}.jpg")
-        if os.path.exists(out) and os.path.getsize(out) > 1024:
-            return out  # 同样的数据、同样的样式，直接复用
+        # 已完结的番数据不会再变，命中就直接复用；连载中的每次重渲染，保证时效
+        done = (media.get("status") or "").upper() == "FINISHED"
+        if done and os.path.exists(out) and os.path.getsize(out) > 1024:
+            return out
         cover = await fetch_image(await self._sess(), cover_url, COVER_DIR, anilist.UA)
         if not cover:
             return None
@@ -379,9 +381,8 @@ class AnimeListPlugin(Star):
 
     # ------------------------------------------------------------ 缩略图网格
     async def _grid(self, items: list[dict], title: str, subtitle: str, tag: str) -> str:
+        # 本周连载会随时变化，网格每次重新渲染，不复用旧图
         out = os.path.join(CARD_DIR, f"grid_{tag}_{_sig([it['cn'] for it in items], title, subtitle)}.jpg")
-        if os.path.exists(out) and os.path.getsize(out) > 1024:
-            return out
 
         sess = await self._sess()
         # 长篇/年番没有日文名，先用中文别名表补上，否则批量取封面会整批跳过
