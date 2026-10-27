@@ -9,9 +9,19 @@ import aiohttp
 
 ENDPOINT = "https://api.tavily.com/search"
 
+# 公认收录番名最全的几个站
+SITES = ["zh.moegirl.org.cn", "bangumi.tv", "zh.wikipedia.org",
+         "ja.wikipedia.org", "baike.baidu.com"]
+
+# 解析时优先采纳这些站点的结果
+PRIORITY_HOSTS = ("moegirl.org.cn", "bangumi.tv")
+
 # 维基 / Bangumi / 萌娘百科里常见的写法
 _PATTERNS = [
-    re.compile(r"(?:日语|日文名|日文原名|原名|日文)[：:]\s*([^\s，,。；;）)】\]]+)"),
+    # 萌娘百科 / 维基的表格行：「| 原名 | けいおん！ |」
+    re.compile(r"\|\s*(?:原名|日文名)\s*\|\s*([^\s|，,。；;]+)"),
+    # 行内写法：「原名：xxx」「日语：xxx」
+    re.compile(r"(?:日语|日文名|日文原名|原名)\s*[：:]\s*([^\s，,。；;）)】\]|]+)"),
     re.compile(r"『([^』]{2,60})』"),
 ]
 
@@ -38,7 +48,11 @@ def _candidates(results: list[dict]) -> list[str]:
         if name and _KANA.search(name) and name not in out and len(name) <= 80:
             out.append(name)
 
-    for item in results:
+    def order_key(item: dict) -> int:
+        url = (item.get("url") or "").lower()
+        return 0 if any(h in url for h in PRIORITY_HOSTS) else 1
+
+    for item in sorted(results, key=order_key):
         title = item.get("title") or ""
         # 标题整体就是日文的情况（如日文维基、Bangumi）
         if _KANA.search(title) and not re.search(r"[\u4e00-\u9fff]{4,}", title.split(" - ")[0]):
@@ -59,22 +73,25 @@ async def search_anime_name(
     if not api_key or not keyword:
         return []
 
-    payload = {
-        "api_key": api_key,
-        "query": f"{keyword} 动画 日文原名",
-        "max_results": max_results,
-        "search_depth": "basic",
-    }
     headers = {
         "Content-Type": "application/json",
         "Authorization": f"Bearer {api_key}",
     }
-    try:
-        async with session.post(ENDPOINT, json=payload, headers=headers, timeout=25) as resp:
-            if resp.status != 200:
-                return []
-            data = await resp.json()
-    except Exception:
-        return []
+    query = f"{keyword} 动画 日文原名"
 
-    return _candidates(data.get("results") or [])
+    # 先限定在动漫站点，命中率最高；结果为空再不限域名找一次
+    for domains in (SITES, None):
+        payload = {"query": query, "max_results": max_results, "search_depth": "basic"}
+        if domains:
+            payload["include_domains"] = domains
+        try:
+            async with session.post(ENDPOINT, json=payload, headers=headers, timeout=25) as resp:
+                if resp.status != 200:
+                    continue
+                data = await resp.json()
+        except Exception:
+            continue
+        names = _candidates(data.get("results") or [])
+        if names:
+            return names
+    return []
