@@ -152,7 +152,6 @@ def _index_hit(keyword: str) -> tuple[str, str]:
     if kw2 and kw2 != kw:
         return _match(kw2, strip_particles=True)
     return _match(kw, strip_particles=True)
-    return ""
 
 
 def _title_distance(a: str, b: str) -> float:
