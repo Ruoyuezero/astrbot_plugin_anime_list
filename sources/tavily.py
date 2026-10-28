@@ -49,11 +49,13 @@ def _pick_jp(text: str, allow_kana_only: bool = False) -> str:
 
 
 def _relevant(item: dict, keyword: str) -> bool:
-    """只认标题里真的出现用户输入名字的结果，正文太长不足为凭。"""
-    probe = re.sub(r"[^\u4e00-\u9fff0-9]", "", keyword or "")[:6]   # 保留数字，「打了300年」才认得出
-    if not probe:
+    """标题与关键词的汉字重叠率 ≥ 60% 才算相关，容忍个别字差异。"""
+    kw = re.sub(r"[^\u4e00-\u9fff0-9]", "", keyword or "")
+    title = re.sub(r"[^\u4e00-\u9fff0-9]", "", item.get("title") or "")
+    if not kw or not title:
         return False
-    return probe in (item.get("title") or "")
+    overlap = len(set(kw) & set(title)) / len(set(kw))
+    return overlap >= 0.6
 
 
 def _candidates(results: list[dict], keyword: str = "") -> list[str]:
