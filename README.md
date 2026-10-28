@@ -83,6 +83,22 @@
 
 `yuc_index.json` 是从 yuc.wiki 抓取生成的全量中日索引，随仓库分发，不需要手动维护。
 
+## 数据存储
+
+插件目录内只放只读资源，运行时产生的数据全部写入 AstrBot 的 `data/plugin_data/astrbot_plugin_anime_list/`：
+
+| 路径 | 性质 | 说明 |
+| --- | --- | --- |
+| `cn_alias.json` | 只读种子 | 随仓库分发的初始映射，插件不会改写它 |
+| `yuc_index.json` | 只读种子 | 全量中日番名索引 |
+| `plugin_data/.../cn_alias.json` | 可写 | 搜索兜底新增的映射写这里，读取时与种子合并 |
+| `plugin_data/.../cn_title_cache.json` | 可写 | 常用译名缓存 |
+| `plugin_data/.../cover_cache.json` | 可写 | 封面地址缓存 |
+| `plugin_data/.../covers/` | 可写 | 封面原图缓存 |
+| `plugin_data/.../cards/` | 可写 | 渲染出的图片 |
+
+这样升级插件覆盖目录时，用户自己攒的映射不会丢。
+
 ## 目录结构
 
 ```

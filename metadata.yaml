@@ -7,7 +7,7 @@ help: |
   /listpic —— 本周连载缩略图网格
   /listpic 2026秋 —— 该季度缩略图网格
   /listpic 番剧名 —— 番剧信息卡片
-version: 1.5.0
+version: 1.5.1
 author: Seira
 repo: "https://github.com/Ruoyuezero/astrbot_plugin_anime_list"
 astrbot_version: ">=4.0.0"

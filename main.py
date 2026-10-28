@@ -160,7 +160,9 @@ def _title_distance(a: str, b: str) -> float:
     return difflib.SequenceMatcher(None, yuc._norm(a), yuc._norm(b)).ratio()
 
 
-_ALIAS_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "cn_alias.json")
+# 插件目录里的 cn_alias.json 是只读种子，运行时新增的写入 plugin_data
+_ALIAS_SEED = os.path.join(os.path.dirname(os.path.abspath(__file__)), "cn_alias.json")
+_ALIAS_PATH = os.path.join(DATA_DIR, "cn_alias.json")
 _alias_cache: dict[str, str] | None = None
 
 
@@ -188,8 +190,24 @@ def _save_cn_title(jp: str, cn: str) -> None:
         pass
 
 
+def _load_aliases() -> dict[str, str]:
+    """种子表与用户表合并：plugin_data 里的优先。"""
+    global _alias_cache
+    if _alias_cache is not None:
+        return _alias_cache
+    merged: dict[str, str] = {}
+    for path in (_ALIAS_SEED, _ALIAS_PATH):
+        try:
+            with open(path, encoding="utf-8") as f:
+                merged.update(json.load(f))
+        except Exception:
+            continue
+    _alias_cache = merged
+    return merged
+
+
 def _save_alias(name: str, jp: str) -> None:
-    """搜索兜底成功后，把新映射写回 cn_alias.json 并刷新缓存。"""
+    """运行时新增的映射只写入 plugin_data，插件目录保持只读。"""
     global _alias_cache
     name, jp = name.strip(), jp.strip()
     if not name or not jp:
@@ -204,25 +222,20 @@ def _save_alias(name: str, jp: str) -> None:
         return
     data[name] = jp
     try:
+        os.makedirs(DATA_DIR, exist_ok=True)
         with open(_ALIAS_PATH, "w", encoding="utf-8") as f:
             json.dump(dict(sorted(data.items(), key=lambda kv: kv[0])), f,
                       ensure_ascii=False, indent=1)
-        _alias_cache = data
-        logger.info(f"[AnimeList] 别名表新增：{name} -> {jp}")
+        if _alias_cache is not None:
+            _alias_cache[name] = jp
+        logger.info(f"[AnimeList] 别名已写入 plugin_data：{name} -> {jp}")
     except Exception as exc:
         logger.warning(f"[AnimeList] 别名表写入失败：{exc}")
 
 
 def _alias_of(name: str) -> str:
-    """yuc 的长篇区块只有中文名，用这张表换成 AniList 认得的日文名。"""
-    global _alias_cache
-    if _alias_cache is None:
-        try:
-            with open(_ALIAS_PATH, encoding="utf-8") as f:
-                _alias_cache = json.load(f)
-        except Exception:
-            _alias_cache = {}
-    return _alias_cache.get(name.strip(), "")
+    """查中文到日文的映射（种子表 + 用户表）。"""
+    return _load_aliases().get(name.strip(), "")
 
 
 def _sig(*parts) -> str:
